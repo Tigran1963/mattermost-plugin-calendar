@@ -305,6 +305,11 @@ func (p *Plugin) GetUserEventsForICalUTC(
 				sq.LtOrEq{"ce.dt_start": end},
 			},
 			sq.Eq{"ce.recurrent": true},
+			sq.And{
+				sq.Eq{"ce.all_day": true},
+				sq.GtOrEq{"ce.dt_end": start.Add(-48 * time.Hour)},
+				sq.LtOrEq{"ce.dt_start": end.Add(48 * time.Hour)},
+			},
 		},
 	}
 
@@ -329,6 +334,7 @@ func (p *Plugin) GetUserEventsForICalUTC(
 			"ce.type",
 			"ce.meeting_link",
 			"ce.all_day",
+			"ce.all_day_timezone",
 		).
 		From("calendar_events ce").
 		LeftJoin("calendar_members cm ON ce.id = cm.event").
@@ -376,12 +382,38 @@ func (p *Plugin) GetUserEventsForICalUTC(
 			continue
 		}
 
+		if err := p.normalizeAllDay(&eventDb); err != nil {
+			p.API.LogError(err.Error())
+			return nil, SomethingWentWrong
+		}
+		if eventDb.AllDay && !eventDb.Recurrent && !allDayOverlaps(eventDb, start, end, userLocation) {
+			continue
+		}
 		// For iCal, we don't expand recurrent events - we include RRULE
 		events = append(events, eventDb)
 		addedEvent[eventDb.Id] = true
 	}
 
 	return events, nil
+}
+
+// setICalendarDates shares date handling between the subscription feed and CalDAV.
+func (p *Plugin) setICalendarDates(icsEvent *ics.VEvent, event Event, user *model.User) {
+	if !event.AllDay {
+		icsEvent.SetStartAt(event.Start)
+		icsEvent.SetEndAt(event.End)
+		return
+	}
+
+	// Reads normalize legacy rows before export; new events carry their source zone.
+	if event.AllDayTimezone != "" {
+		if loc, err := time.LoadLocation(event.AllDayTimezone); err == nil {
+			event.Start = event.Start.In(loc)
+			event.End = event.End.In(loc)
+		}
+	}
+	icsEvent.SetAllDayStartAt(event.Start)
+	icsEvent.SetAllDayEndAt(event.End)
 }
 
 // generateICalendar converts events to iCalendar format
@@ -399,15 +431,7 @@ func (p *Plugin) generateICalendar(events []Event, user *model.User) string {
 		icsEvent.SetDtStampTime(event.Created)
 		icsEvent.SetCreatedTime(event.Created)
 		icsEvent.SetModifiedAt(event.Created)
-		if event.AllDay {
-			// Start/End are already stored as an exclusive day range, matching
-			// what VALUE=DATE expects
-			icsEvent.SetAllDayStartAt(event.Start)
-			icsEvent.SetAllDayEndAt(event.End)
-		} else {
-			icsEvent.SetStartAt(event.Start)
-			icsEvent.SetEndAt(event.End)
-		}
+		p.setICalendarDates(icsEvent, event, user)
 		icsEvent.SetSummary(event.Title)
 
 		if event.Description != "" {

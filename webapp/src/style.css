@@ -344,6 +344,26 @@
     width: 95%;
 }
 
+.fui-Option.event-channel-users-action {
+    gap: 8px;
+    margin: 4px 6px;
+    padding: 8px 12px;
+    border: 1px solid var(--colorBrandStroke1);
+    border-radius: 6px;
+    background-color: var(--colorBrandBackground2);
+    color: var(--colorBrandForeground1);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.fui-Option.event-channel-users-action:hover {
+    background-color: var(--colorBrandBackground2Hover);
+}
+
+.event-channel-users-action > svg {
+    flex-shrink: 0;
+}
+
 .added-user-badge-container {
     padding-right: 15px;
     background-color: var(--colorNeutralBackground1Hover);
@@ -627,6 +647,34 @@ header {
     display: block;
     position: relative;
     width: 100%;
+}
+
+.event-type-color-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+
+.event-type-selected-dot {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    pointer-events: none;
+}
+
+.event-type-picker .event-type-input-with-color {
+    padding-left: 32px;
+}
+
+.event-type-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .add-channels-list {

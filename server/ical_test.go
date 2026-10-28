@@ -360,7 +360,7 @@ func TestServeICalFeed_InvalidToken(t *testing.T) {
 	assert := assert.New(t)
 
 	api := plugintest.API{}
-	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/ical/feed/short", "user-agent", "").Return()
+	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/ical/feed/[REDACTED]", "user-agent", "").Return()
 
 	calPlugin := Plugin{
 		MattermostPlugin: plugin.MattermostPlugin{
@@ -388,7 +388,7 @@ func TestServeICalFeed_TokenNotFound(t *testing.T) {
 	tokenValue := "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
 
 	api := plugintest.API{}
-	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/ical/feed/"+tokenValue, "user-agent", "").Return()
+	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/ical/feed/[REDACTED]", "user-agent", "").Return()
 	api.On("LogError", "ServeICalFeed: token not found: sql: no rows in result set").Return()
 
 	// DB mocks
@@ -567,4 +567,45 @@ func TestGetICalToken_NotAuthorized(t *testing.T) {
 	assert.Equal(http.StatusUnauthorized, result.StatusCode)
 
 	api.AssertExpectations(t)
+}
+
+// Exercise both export paths with the UTC timestamps actually stored by CreateEvent.
+func TestICalendarDates_UserTimezone(t *testing.T) {
+	for _, zone := range []string{"Europe/Moscow", "America/New_York", "UTC"} {
+		t.Run(zone, func(t *testing.T) {
+			loc, err := time.LoadLocation(zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			user := &model.User{Timezone: map[string]string{
+				"useAutomaticTimezone": "false", "manualTimezone": zone,
+			}}
+			p := &Plugin{}
+			backend := NewCalDAVBackend(p, "user", "token", "")
+			for _, days := range []int{1, 4} {
+				// The four-day range crosses the New York DST boundary.
+				start := time.Date(2026, 10, 30, 0, 0, 0, 0, loc)
+				end := start.AddDate(0, 0, days)
+				event := Event{Id: "all-day", AllDay: true, AllDayTimezone: zone, Start: start.UTC(), End: end.UTC()}
+				for name, content := range map[string]string{
+					"feed":   p.generateICalendar([]Event{event}, user),
+					"caldav": backend.eventToICalendarString(&event, user),
+				} {
+					assert.Contains(t, content, "DTSTART;VALUE=DATE:"+start.Format("20060102"), name)
+					assert.Contains(t, content, "DTEND;VALUE=DATE:"+end.Format("20060102"), name)
+					assert.NotContains(t, content, "DTSTART:", name)
+				}
+			}
+			start := time.Date(2026, 10, 23, 21, 0, 0, 0, loc)
+			event := Event{Id: "timed", Start: start.UTC(), End: start.Add(time.Hour).UTC()}
+			for name, content := range map[string]string{
+				"feed":   p.generateICalendar([]Event{event}, user),
+				"caldav": backend.eventToICalendarString(&event, user),
+			} {
+				assert.Contains(t, content, "DTSTART:"+event.Start.Format("20060102T150405Z"), name)
+				assert.Contains(t, content, "DTEND:"+event.End.Format("20060102T150405Z"), name)
+				assert.NotContains(t, content, "VALUE=DATE", name)
+			}
+		})
+	}
 }

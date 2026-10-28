@@ -78,6 +78,10 @@ func TestEventETag(t *testing.T) {
 	etag4 := eventETag(event)
 	assert.NotEqual(etag1, etag4)
 	assert.NotEqual(etag3, etag4)
+
+	// Corrected all-day exports must be fetched even when Updated is unchanged.
+	event.AllDay = true
+	assert.NotEqual(etag4, eventETag(event))
 }
 
 func TestCalDAVBackend_eventToICalendarString(t *testing.T) {
@@ -179,7 +183,7 @@ func TestCalDAVBackend_icalendarToEvent(t *testing.T) {
 	vevent.SetStartAt(start)
 	vevent.SetEndAt(end)
 
-	event, err := backend.icalendarToEvent(cal, "event-123")
+	event, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.Nil(err)
 	assert.Equal("event-123", event.Id)
 	assert.Equal("Test Event", event.Title)
@@ -213,7 +217,7 @@ END:VCALENDAR`
 	cal, err := ics.ParseCalendar(strings.NewReader(icalData))
 	assert.Nil(err)
 
-	event, err := backend.icalendarToEvent(cal, "event-123")
+	event, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.Nil(err)
 	assert.True(event.AllDay)
 	assert.Equal(time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC), event.Start)
@@ -235,7 +239,7 @@ func TestCalDAVBackend_icalendarToEvent_WithRRULE(t *testing.T) {
 	vevent.SetEndAt(start.Add(time.Hour))
 	vevent.AddRrule("FREQ=DAILY;COUNT=10")
 
-	event, err := backend.icalendarToEvent(cal, "event-123")
+	event, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.Nil(err)
 	assert.True(event.Recurrent)
 	assert.True(strings.HasPrefix(event.Recurrence, "RRULE:"))
@@ -252,7 +256,7 @@ func TestCalDAVBackend_icalendarToEvent_NoVEVENT(t *testing.T) {
 	cal := ics.NewCalendar()
 	cal.SetVersion("2.0")
 
-	_, err := backend.icalendarToEvent(cal, "event-123")
+	_, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.NotNil(err)
 	assert.Contains(err.Error(), "no VEVENT")
 }
@@ -278,7 +282,7 @@ END:VCALENDAR`
 	cal, err := ics.ParseCalendar(strings.NewReader(icalData))
 	assert.Nil(err)
 
-	event, err := backend.icalendarToEvent(cal, "event-123")
+	event, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.Nil(err)
 	assert.Equal("Test Event with Timezone", event.Title)
 
@@ -310,7 +314,7 @@ END:VCALENDAR`
 	cal, err := ics.ParseCalendar(strings.NewReader(icalData))
 	assert.Nil(err)
 
-	event, err := backend.icalendarToEvent(cal, "event-123")
+	event, err := backend.icalendarToEvent(cal, "event-123", nil)
 	assert.Nil(err)
 
 	// Time should remain as specified (already UTC)
@@ -325,8 +329,8 @@ func TestServeCalDAV_InvalidToken(t *testing.T) {
 	assert := assert.New(t)
 
 	api := plugintest.API{}
-	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/short/", "user-agent", "").Return()
-	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/short/", "host", "example.com", "user-agent", "", "hasAuth", false).Return()
+	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/[REDACTED]/", "user-agent", "").Return()
+	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/[REDACTED]/", "host", "example.com", "user-agent", "", "hasAuth", false).Return()
 	api.On("LogError", "CalDAV invalid token", "token_length", 5).Return()
 
 	calPlugin := Plugin{
@@ -357,8 +361,8 @@ func TestServeCalDAV_NoBasicAuth(t *testing.T) {
 	tokenValue := "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
 
 	api := plugintest.API{}
-	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/"+tokenValue+"/", "user-agent", "").Return()
-	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/"+tokenValue+"/", "host", "example.com", "user-agent", "", "hasAuth", false).Return()
+	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/[REDACTED]/", "user-agent", "").Return()
+	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/[REDACTED]/", "host", "example.com", "user-agent", "", "hasAuth", false).Return()
 	api.On("LogError", "ServeCalDAV: token not found: sql: no rows in result set").Return()
 
 	// DB mocks - token not found
@@ -411,8 +415,8 @@ func TestServeCalDAV_TokenNotFound(t *testing.T) {
 	tokenValue := "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
 
 	api := plugintest.API{}
-	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/"+tokenValue+"/", "user-agent", "").Return()
-	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/"+tokenValue+"/", "host", "example.com", "user-agent", "", "hasAuth", true).Return()
+	api.On("LogDebug", "Plugin HTTP request", "method", "GET", "path", "/caldav/[REDACTED]/", "user-agent", "").Return()
+	api.On("LogInfo", "CalDAV incoming request", "method", "GET", "path", "/caldav/[REDACTED]/", "host", "example.com", "user-agent", "", "hasAuth", true).Return()
 	api.On("LogError", "ServeCalDAV: token not found: sql: no rows in result set").Return()
 
 	// DB mocks
@@ -699,4 +703,31 @@ func TestGenerateICalToken_WithCalDAVURL(t *testing.T) {
 	assert.Contains(bodyStr, "/caldav/")
 
 	api.AssertExpectations(t)
+}
+
+func TestCalDAVBackend_AllDayRoundTrip_UserTimezone(t *testing.T) {
+	for _, zone := range []string{"Europe/Moscow", "America/New_York"} {
+		t.Run(zone, func(t *testing.T) {
+			p := &Plugin{}
+			backend := NewCalDAVBackend(p, "user", "token", "")
+			user := &model.User{Timezone: map[string]string{"manualTimezone": zone}}
+			loc := p.GetUserLocation(user)
+			event := &Event{Id: "all-day", AllDay: true, AllDayTimezone: zone,
+				Start: time.Date(2026, 10, 30, 0, 0, 0, 0, loc).UTC(),
+				End:   time.Date(2026, 11, 3, 0, 0, 0, 0, loc).UTC(),
+			}
+			content := backend.eventToICalendarString(event, user)
+			cal, err := ics.ParseCalendar(strings.NewReader(content))
+			if !assert.NoError(t, err) {
+				return
+			}
+			parsed, err := backend.icalendarToEvent(cal, event.Id, user)
+			if !assert.NoError(t, err) {
+				return
+			}
+			assert.True(t, parsed.AllDay)
+			assert.True(t, event.Start.Equal(parsed.Start), "start must survive editing in Apple Calendar")
+			assert.True(t, event.End.Equal(parsed.End), "exclusive end must survive editing, including DST")
+		})
+	}
 }

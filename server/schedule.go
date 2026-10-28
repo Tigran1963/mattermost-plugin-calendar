@@ -93,6 +93,11 @@ func (p *Plugin) GetSchedule(w http.ResponseWriter, r *http.Request) {
 			var userSchEvents []UserScheduleEvent
 			// convert event utc time to user location
 			for _, event := range userEvents {
+				if event.AllDay {
+					// An all-day event blocks its civil dates in the requested calendar.
+					event.Start = time.Date(event.Start.Year(), event.Start.Month(), event.Start.Day(), 0, 0, 0, 0, userLoc)
+					event.End = time.Date(event.End.Year(), event.End.Month(), event.End.Day(), 0, 0, 0, 0, userLoc)
+				}
 				userEvent := UserScheduleEvent{
 					Start:    event.Start.In(userLoc),
 					End:      event.End.In(userLoc),
@@ -114,7 +119,10 @@ func (p *Plugin) GetSchedule(w http.ResponseWriter, r *http.Request) {
 				slotCount := int32(math.Ceil(event.End.Sub(event.Start).Minutes() / DefaultSlotTime))
 
 				for i := startPosition; i <= startPosition+slotCount-1; i++ {
-					userBusyTime[i] = true
+					// Multi-day events and DST days may extend past this day's slots.
+					if i >= 0 && i < int32(len(userBusyTime)) {
+						userBusyTime[i] = true
+					}
 				}
 
 				usersBusyTimesSync.Lock()

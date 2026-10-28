@@ -6,6 +6,8 @@ import React from 'react';
 
 interface EventTypeSelectProps {
     selected: string;
+    callColor: string;
+    eventColor: string;
     onSelected: (selected: string) => void;
 }
 
@@ -20,31 +22,44 @@ const eventTypeOptions: Array<EventTypeOption> = [
 ];
 
 const EventTypeSelect = (props: EventTypeSelectProps) => {
-    const getSelectedOptionName = (selected: string) => {
-        if (!selected) {
-            return '';
-        }
-        return eventTypeOptions.find((option) => option.id === selected)?.display_name;
-    };
+    const selectedOption = eventTypeOptions.find((option) => option.id === props.selected);
+    const getColor = (type: string) => type === 'call' ? props.callColor : props.eventColor;
 
     return (
         <div className='event-visibility-container'>
             <CalendarLtr24Regular/>
             <div className='event-visibility-input-container'>
-                <div className='event-input-visibility-wrapper'>
+                <div className='event-input-visibility-wrapper event-type-picker'>
+                    {selectedOption && (
+                        <span
+                            className='event-type-color-dot event-type-selected-dot'
+                            style={{backgroundColor: getColor(selectedOption.id)}}
+                            aria-hidden='true'
+                        />
+                    )}
                     <Combobox
                         placeholder='Select a calendar'
+                        input={{className: selectedOption ? 'event-type-input-with-color' : undefined}}
+                        selectedOptions={selectedOption ? [selectedOption.id] : []}
                         onOptionSelect={(event, data) => {
                             props.onSelected(data.optionValue!);
                         }}
-                        value={getSelectedOptionName(props.selected)}
+                        value={selectedOption?.display_name || ''}
                     >
                         {eventTypeOptions.map((option) => (
                             <Option
                                 key={option.id}
-                                text={option.id}
+                                value={option.id}
+                                text={option.display_name}
                             >
-                                {getSelectedOptionName(option.id)}
+                                <span className='event-type-option'>
+                                    <span
+                                        className='event-type-color-dot'
+                                        style={{backgroundColor: getColor(option.id)}}
+                                        aria-hidden='true'
+                                    />
+                                    {option.display_name}
+                                </span>
                             </Option>
                         ))}
                     </Combobox>

@@ -53,6 +53,11 @@ func TestGetUTCEvents(t *testing.T) {
 				sq.LtOrEq{"ce.dt_start": sqlRequestTimeEnd},
 			},
 			sq.Eq{"ce.recurrent": true},
+			sq.And{
+				sq.Eq{"ce.all_day": true},
+				sq.GtOrEq{"ce.dt_end": sqlRequestTimeStart.Add(-48 * time.Hour)},
+				sq.LtOrEq{"ce.dt_start": sqlRequestTimeEnd.Add(48 * time.Hour)},
+			},
 		},
 	}
 
@@ -78,6 +83,7 @@ func TestGetUTCEvents(t *testing.T) {
 			"ce.type",
 			"ce.meeting_link",
 			"ce.all_day",
+			"ce.all_day_timezone",
 			"ce.mention",
 		).
 		From("calendar_events ce").
@@ -87,7 +93,7 @@ func TestGetUTCEvents(t *testing.T) {
 	querySql, _, err := queryBuilder.ToSql()
 	expectedQuery := dbMock.ExpectQuery(
 		regexp.QuoteMeta(querySql),
-	).WithArgs(session.UserId, session.UserId, "private", sqlRequestTimeStart, sqlRequestTimeEnd, true)
+	).WithArgs(session.UserId, session.UserId, "private", sqlRequestTimeStart, sqlRequestTimeEnd, true, true, sqlRequestTimeStart.Add(-48*time.Hour), sqlRequestTimeEnd.Add(48*time.Hour))
 
 	sqlEventsRow := sqlmock.NewRows([]string{
 		"id",

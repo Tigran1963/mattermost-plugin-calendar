@@ -108,6 +108,11 @@ func TestGetEvents(t *testing.T) {
 				sq.LtOrEq{"ce.dt_start": sqlTimeEnd},
 			},
 			sq.Eq{"ce.recurrent": true},
+			sq.And{
+				sq.Eq{"ce.all_day": true},
+				sq.GtOrEq{"ce.dt_end": sqlTimeStart.Add(-48 * time.Hour)},
+				sq.LtOrEq{"ce.dt_start": sqlTimeEnd.Add(48 * time.Hour)},
+			},
 		},
 	}
 
@@ -132,6 +137,7 @@ func TestGetEvents(t *testing.T) {
 			"ce.type",
 			"ce.meeting_link",
 			"ce.all_day",
+			"ce.all_day_timezone",
 			"ce.mention",
 		).
 		From("calendar_events ce").
@@ -140,7 +146,7 @@ func TestGetEvents(t *testing.T) {
 
 	expectedQuerySql, _, err := queryBuilder.ToSql()
 	expectedQuery := dbMock.ExpectQuery(regexp.QuoteMeta(expectedQuerySql)).
-		WithArgs(session.UserId, session.UserId, "private", sqlTimeStart, sqlTimeEnd, true)
+		WithArgs(session.UserId, session.UserId, "private", sqlTimeStart, sqlTimeEnd, true, true, sqlTimeStart.Add(-48*time.Hour), sqlTimeEnd.Add(48*time.Hour))
 
 	eventsRow := sqlmock.NewRows([]string{
 		"id",

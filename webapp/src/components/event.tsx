@@ -8,9 +8,9 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { getCurrentTeamId, getCurrentTeam, getMyTeams } from 'mattermost-redux/selectors/entities/teams';
 import { getMyTeams as fetchMyTeams } from 'mattermost-redux/actions/teams';
-import { getCurrentUserId, getUser, getUserStatuses, makeGetProfilesInChannel } from 'mattermost-redux/selectors/entities/users';
+import { getCurrentUserId, getUser, getUserStatuses } from 'mattermost-redux/selectors/entities/users';
 import { getTeammateNameDisplaySetting } from 'mattermost-redux/selectors/entities/preferences';
-import { getMissingProfilesByIds, getProfilesInChannel } from 'mattermost-redux/actions/users';
+import { getMissingProfilesByIds } from 'mattermost-redux/actions/users';
 
 // importing the editor and the plugin from their full paths
 import {
@@ -136,8 +136,13 @@ const initialEndTime = (): string => {
     }), 'HH:mm');
 };
 
+const parseEventDate = (value: string, allDay: boolean): Date => {
+    return parse(value, allDay ? 'yyyy-MM-dd' : "yyyy-MM-dd'T'HH:mm:ssxxx", new Date());
+};
+
 const EventModalComponent = () => {
     const selectedEvent = useSelector(selectSelectedEvent);
+    const isEditingEvent = selectedEvent?.event?.id != null;
     const isOpenEventModal = useSelector(selectIsOpenEventModal);
 
     const displayNameSettings = useSelector(getTeammateNameDisplaySetting);
@@ -180,9 +185,10 @@ const EventModalComponent = () => {
     const usersMentionTags: {
         [name: string]: string
     } = {
-        '@channel': 'users from channel',
+        '@channel': 'Choose all users from channel',
     };
     const [usersAutocomplete, setUsersAutocomplete] = useState<UserProfile[]>([]);
+    const userSearchRequest = useRef(0);
 
     const [searchUsersInput, setSearchUsersInput] = useState('');
 
@@ -225,21 +231,38 @@ const EventModalComponent = () => {
     };
 
     const [channelsAutocomplete, setChannelsAutocomplete] = useState<Channel[]>([]);
-    const [selectedChannel, setSelectedChannel] = useState({});
+    const [selectedChannel, setSelectedChannel] = useState<Partial<Channel>>({});
     const [selectedChannelText, setSelectedChannelText] = useState('');
+    const channelSearchRequest = useRef(0);
+    const channelMembersRequest = useRef(0);
+    const channelMembersLoading = useRef(false);
+    const [isLoadingChannelMembers, setIsLoadingChannelMembers] = useState(false);
+
+    useEffect(() => {
+        channelSearchRequest.current += 1;
+        channelMembersRequest.current += 1;
+        channelMembersLoading.current = false;
+        setIsLoadingChannelMembers(false);
+        setChannelsAutocomplete([]);
+        // A late team fallback must not erase the channel loaded with an existing event.
+        if (!isEditingEvent) {
+            setSelectedChannel({});
+            setSelectedChannelText('');
+        }
+        return () => {
+            channelSearchRequest.current += 1;
+            channelMembersRequest.current += 1;
+        };
+    }, [teamId, isEditingEvent]);
 
     const [selectedVisibility, setSelectedVisibility] = useState(DEFAULT_VISIBILITY)
 
     const [isPlanningAssistantOpen, setIsPlanningAssistantOpen] = useState(false);
     const inputEventTitleRef = React.useRef<HTMLInputElement>(null);
 
-    // the selector has to survive re-renders, a fresh one each time throws its
-    // memoisation away and hands back a new array on every store update
-    const getProfilesInChannelSelector = React.useMemo(makeGetProfilesInChannel, []);
-    const profilesInCurrentChannelSelector = (state: GlobalState) => getProfilesInChannelSelector(state, selectedChannel?.id);
-    const profilesInChannel = useSelector(profilesInCurrentChannelSelector);
-
-    const usersAddedInEvent = useSelector(getMembersAddedInEvent);
+    const usersAddedInEvent: UserProfile[] = useSelector(getMembersAddedInEvent);
+    const usersAddedInEventRef = useRef(usersAddedInEvent);
+    usersAddedInEventRef.current = usersAddedInEvent;
 
     const [titleEvent, setTitleEvent] = useState('');
     const [descriptionEvent, setDescriptionEvent] = useState('');
@@ -276,6 +299,11 @@ const EventModalComponent = () => {
             endTime: initialEndTime(),
         }));
 
+        userSearchRequest.current += 1;
+        channelSearchRequest.current += 1;
+        channelMembersRequest.current += 1;
+        channelMembersLoading.current = false;
+        setIsLoadingChannelMembers(false);
         setUsersAutocomplete([]);
         setChannelsAutocomplete([]);
         setSelectedChannelText('');
@@ -318,30 +346,71 @@ const EventModalComponent = () => {
         dispatch(updateSelectedEventTime({ end: parse(data.value, 'yyyy-MM-dd', new Date()) }));
     };
 
-    const onInputUserAction = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        setSearchUsersInput(event.target.value);
-        if (event.target.value !== '') {
-            const resp = await Client4.searchUsers(event.target.value, '');
-            setUsersAutocomplete(resp);
+    const loadUserOptions = async (search: string = '') => {
+        const request = ++userSearchRequest.current;
+        try {
+            const users = search === '' ?
+                await Client4.getProfiles(0, 100, {active: true}) :
+                await Client4.searchUsers(search, {allow_inactive: false});
+            // Opening the picker and typing can overlap; only show the latest result.
+            if (request === userSearchRequest.current) {
+                setUsersAutocomplete(users.filter((user) => !user.delete_at));
+            }
+        } catch (e) {
+            if (request === userSearchRequest.current) {
+                setUsersAutocomplete([]);
+            }
         }
     };
 
+    const onInputUserAction = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchUsersInput(event.target.value);
+        await loadUserOptions(event.target.value);
+    };
+
     const onSelectChannelOption = (event: SelectionEvents, data: OptionOnSelectData) => {
+        channelSearchRequest.current += 1;
+        channelMembersRequest.current += 1;
+        channelMembersLoading.current = false;
+        setIsLoadingChannelMembers(false);
         channelsAutocomplete.map((option) => {
             if (option.id === data.optionValue) {
                 setSelectedChannel(option);
                 setSelectedChannelText(option.display_name);
-                dispatch(getProfilesInChannel(option.id, 0, 1000));
             }
         });
     };
 
+    const notArchived = (channels: Channel[]): Channel[] => {
+        return (channels || []).filter((channel) => !channel.delete_at);
+    };
+
+    const loadMyChannels = async () => {
+        const request = ++channelSearchRequest.current;
+        if (!teamId) {
+            setChannelsAutocomplete([]);
+            return;
+        }
+        try {
+            const channels = await Client4.getMyChannels(teamId);
+            if (request === channelSearchRequest.current) {
+                setChannelsAutocomplete(notArchived(channels).filter((channel) => channel.type === 'O' || channel.type === 'P'));
+            }
+        } catch (e) {
+            // Keep the current list; searching is still available if loading fails.
+        }
+    };
+
     const onInputChannelAction = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const request = ++channelSearchRequest.current;
+        channelMembersRequest.current += 1;
+        channelMembersLoading.current = false;
+        setIsLoadingChannelMembers(false);
+        setSelectedChannel({});
         setSelectedChannelText(event.target.value);
         if (event.target.value === '') {
-            // if channel input empty, remove selected channel
-            setSelectedChannel({});
-            setChannelsAutocomplete([]);
+            // Restore the user's channels after clearing the input.
+            await loadMyChannels();
             return;
         }
         if (!teamId) {
@@ -352,9 +421,13 @@ const EventModalComponent = () => {
         }
         try {
             const resp = await Client4.autocompleteChannels(teamId, event.target.value);
-            setChannelsAutocomplete(resp);
+            if (request === channelSearchRequest.current) {
+                setChannelsAutocomplete(notArchived(resp));
+            }
         } catch (e) {
-            setChannelsAutocomplete([]);
+            if (request === channelSearchRequest.current) {
+                setChannelsAutocomplete([]);
+            }
         }
     };
 
@@ -366,6 +439,38 @@ const EventModalComponent = () => {
             </Toast>,
             { intent: 'error' }
         );
+    };
+
+    const chooseAllUsersFromChannel = async () => {
+        if (!selectedChannel.id || channelMembersLoading.current) {
+            return;
+        }
+        const request = ++channelMembersRequest.current;
+        channelMembersLoading.current = true;
+        setIsLoadingChannelMembers(true);
+        try {
+            // Fetch on demand instead of trusting a possibly empty or partial store cache.
+            const profiles = await Client4.getProfilesInChannel(selectedChannel.id, 0, 1000, '', {active: true});
+            if (request !== channelMembersRequest.current) {
+                return;
+            }
+            const members = new Map<string, UserProfile>();
+            [...usersAddedInEventRef.current, ...profiles].forEach((user) => {
+                if (!user.delete_at) {
+                    members.set(user.id, user);
+                }
+            });
+            dispatch(updateMembersAddedInEvent(Array.from(members.values())));
+        } catch (e) {
+            if (request === channelMembersRequest.current) {
+                showErrorToast('Failed to load channel members, please try again');
+            }
+        } finally {
+            if (request === channelMembersRequest.current) {
+                channelMembersLoading.current = false;
+                setIsLoadingChannelMembers(false);
+            }
+        }
     };
 
     // combines a date with an "HH:mm" time string into a real Date, used only to
@@ -384,8 +489,8 @@ const EventModalComponent = () => {
     };
 
     // All-day events are stored as an exclusive day range (end is midnight of
-    // the day *after* the last day) — the same convention FullCalendar and
-    // iCal's VALUE=DATE use, so the feeds need no special-casing on read.
+    // the day *after* the last day), as FullCalendar and iCal expect. The server
+    // converts these local midnights to UTC when saving.
     const buildEventRange = (): { start: Date; end: Date } => {
         if (selectedAllDay) {
             return {
@@ -560,9 +665,9 @@ const EventModalComponent = () => {
                 setTitleEvent(data.data.title);
                 setDescriptionEvent(data.data.description);
 
-                const startEventResp: Date = parse(data.data.start, "yyyy-MM-dd'T'HH:mm:ssxxx", new Date());
-                const endEventResp: Date = parse(data.data.end, "yyyy-MM-dd'T'HH:mm:ssxxx", new Date());
                 const isAllDay = Boolean(data.data.allDay);
+                const startEventResp: Date = parseEventDate(data.data.start, isAllDay);
+                const endEventResp: Date = parseEventDate(data.data.end, isAllDay);
 
                 // the server stores an exclusive end (midnight of the day
                 // after the last day); the End field shows the last actual day
@@ -875,6 +980,11 @@ const EventModalComponent = () => {
                                             <Combobox
                                                 placeholder='Select a channel'
                                                 onChange={onInputChannelAction}
+                                                onOpenChange={(event, data) => {
+                                                    if (data.open && selectedChannelText === '') {
+                                                        loadMyChannels();
+                                                    }
+                                                }}
                                                 onOptionSelect={onSelectChannelOption}
                                                 value={selectedChannelText}
                                             >
@@ -919,6 +1029,8 @@ const EventModalComponent = () => {
                                     :
                                     <EventTypeSelect
                                         selected={selectedType}
+                                        callColor={settings.callColor}
+                                        eventColor={settings.eventColor}
                                         onSelected={(selected) => {
                                             setSelectedType(selected);
                                             if (selectedEvent?.event?.id == null) {
@@ -971,17 +1083,22 @@ const EventModalComponent = () => {
                                             checked={false}
                                             selectedOptions={[]}
                                             onChange={onInputUserAction}
-                                            onOptionSelect={(event, data) => {
-                                                if (data.optionValue in usersMentionTags) {
-                                                    dispatch(updateMembersAddedInEvent(profilesInChannel));
+                                            onOpenChange={(event, data) => {
+                                                if (data.open && searchUsersInput === '') {
+                                                    loadUserOptions();
                                                 }
+                                            }}
+                                            onOptionSelect={(event, data) => {
+                                                const channelRequest = data.optionValue in usersMentionTags ? chooseAllUsersFromChannel() : undefined;
                                                 usersAutocomplete.map((user) => {
                                                     if (user.id === data.optionValue && !usersAddedInEvent.some((u) => u.id === data.optionValue)) {
                                                         dispatch(updateMembersAddedInEvent([...usersAddedInEvent, user]));
                                                     }
                                                 });
+                                                userSearchRequest.current += 1;
                                                 setSearchUsersInput('');
                                                 setUsersAutocomplete([]);
+                                                return channelRequest;
                                             }}
                                             value={searchUsersInput}
                                         >
@@ -1011,13 +1128,18 @@ const EventModalComponent = () => {
                                                     </Option>
                                                 ) : null}
                                             </OptionGroup>
-                                            <OptionGroup label='SPECIAL'>
+                                            <OptionGroup label='CHANNEL'>
                                                 {
                                                     Object.entries(usersMentionTags).map(([key, value]) => {
                                                         return (<Option
                                                             key={key}
-                                                            text={key}
+                                                            value={key}
+                                                            text={value}
+                                                            className='event-channel-users-action'
+                                                            disabled={!selectedChannel.id || isLoadingChannelMembers}
+                                                            title={!selectedChannel.id ? 'Select a channel first' : undefined}
                                                         >
+                                                            {isLoadingChannelMembers ? <Spinner size='tiny' /> : <PersonAdd24Regular aria-hidden='true' />}
                                                             {value}
                                                         </Option>);
                                                     })

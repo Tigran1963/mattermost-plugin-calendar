@@ -257,11 +257,10 @@ type Event struct {
 	// effect for events that post to a channel.
 	Mention EventMention `json:"mention" db:"mention"`
 
-	// Start/End store an exclusive range for all-day events (End is midnight
-	// of the day after the last day), matching FullCalendar's own convention
-	// and RFC 5545's VALUE=DATE semantics, so iCal/CalDAV export needs no
-	// special-casing beyond picking the all-day property setters.
-	AllDay bool `json:"allDay" db:"all_day"`
+	// End is exclusive. AllDayTimezone preserves the source calendar dates
+	// while Start/End remain UTC instants in storage.
+	AllDay         bool   `json:"allDay" db:"all_day"`
+	AllDayTimezone string `json:"-" db:"all_day_timezone"`
 }
 
 type UserSettings struct {

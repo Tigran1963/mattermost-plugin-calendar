@@ -91,6 +91,11 @@ func (p *Plugin) GetUserEventsUTC(
 				sq.LtOrEq{"ce.dt_start": end},
 			},
 			sq.Eq{"ce.recurrent": true},
+			sq.And{
+				sq.Eq{"ce.all_day": true},
+				sq.GtOrEq{"ce.dt_end": start.Add(-48 * time.Hour)},
+				sq.LtOrEq{"ce.dt_start": end.Add(48 * time.Hour)},
+			},
 		},
 	}
 
@@ -122,6 +127,7 @@ func (p *Plugin) GetUserEventsUTC(
 			"ce.type",
 			"ce.meeting_link",
 			"ce.all_day",
+			"ce.all_day_timezone",
 			"ce.mention",
 		).
 		From("calendar_events ce").
@@ -187,11 +193,6 @@ func (p *Plugin) GetUserEventsUTC(
 			eventDb.Color = &color
 		}
 
-		if userLocation != nil {
-			eventDb.Start = eventDb.Start.In(userLocation)
-			eventDb.End = eventDb.End.In(userLocation)
-		}
-
 		if eventDb.Visibility == VisibilityChannel && eventDb.Channel == nil {
 			continue
 		}
@@ -204,6 +205,14 @@ func (p *Plugin) GetUserEventsUTC(
 			continue
 		}
 
+		if err := p.normalizeAllDay(&eventDb); err != nil {
+			p.API.LogError(err.Error())
+			return nil, SomethingWentWrong
+		}
+		if userLocation != nil && !eventDb.AllDay {
+			eventDb.Start = eventDb.Start.In(userLocation)
+			eventDb.End = eventDb.End.In(userLocation)
+		}
 		if eventDb.Recurrent {
 			eventRule, errRrule := rrule.StrToRRule(eventDb.Recurrence)
 			if errRrule != nil {
@@ -224,23 +233,18 @@ func (p *Plugin) GetUserEventsUTC(
 				),
 				end, false)
 
-			for _, eventDate := range eventDates {
-				eventTime := eventDb.End.Sub(eventDb.Start)
-				eventDb.Start = time.Date(
-					eventDate.Year(),
-					eventDate.Month(),
-					eventDate.Day(),
-					eventDb.Start.Hour(),
-					eventDb.Start.Minute(),
-					eventDb.Start.Second(),
-					eventDb.Start.Nanosecond(),
-					eventDb.Start.Location(),
-				)
-				eventDb.End = eventDb.Start.Add(eventTime)
-
-				events = append(events, eventDb)
+			if eventDb.AllDay {
+				first, last := allDayRecurrenceBounds(eventDb, start, end, userLocation)
+				eventDates = eventRule.Between(first, last, true)
 			}
-		} else {
+
+			for _, eventDate := range eventDates {
+				occurrence := occurrenceOnDate(eventDb, eventDate)
+				if !occurrence.AllDay || allDayOverlaps(occurrence, start, end, userLocation) {
+					events = append(events, occurrence)
+				}
+			}
+		} else if !eventDb.AllDay || allDayOverlaps(eventDb, start, end, userLocation) {
 			events = append(events, eventDb)
 		}
 		addedEvent[eventDb.Id] = true
@@ -393,6 +397,7 @@ func (p *Plugin) GetEvent(w http.ResponseWriter, r *http.Request) {
 			"ce.type",
 			"ce.meeting_link",
 			"ce.all_day",
+			"ce.all_day_timezone",
 			"ce.mention",
 			"cm.member",
 		).
@@ -441,26 +446,27 @@ func (p *Plugin) GetEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	event := Event{
-		Id:          eventDb.Id,
-		Title:       eventDb.Title,
-		Description: eventDb.Description,
-		Start:       eventDb.Start,
-		End:         eventDb.End,
-		Attendees:   members,
-		Created:     eventDb.Created,
-		Updated:     eventDb.Updated,
-		Owner:       eventDb.Owner,
-		Channel:     eventDb.Channel,
-		Recurrence:  eventDb.Recurrence,
-		Color:       eventDb.Color,
-		Team:        eventDb.Team,
-		Visibility:  eventDb.Visibility,
-		Alert:       eventDb.Alert,
-		AlertTime:   eventDb.AlertTime,
-		Type:        eventDb.Type,
-		MeetingLink: eventDb.MeetingLink,
-		AllDay:      eventDb.AllDay,
-		Mention:     eventDb.Mention,
+		Id:             eventDb.Id,
+		Title:          eventDb.Title,
+		Description:    eventDb.Description,
+		Start:          eventDb.Start,
+		End:            eventDb.End,
+		Attendees:      members,
+		Created:        eventDb.Created,
+		Updated:        eventDb.Updated,
+		Owner:          eventDb.Owner,
+		Channel:        eventDb.Channel,
+		Recurrence:     eventDb.Recurrence,
+		Color:          eventDb.Color,
+		Team:           eventDb.Team,
+		Visibility:     eventDb.Visibility,
+		Alert:          eventDb.Alert,
+		AlertTime:      eventDb.AlertTime,
+		Type:           eventDb.Type,
+		MeetingLink:    eventDb.MeetingLink,
+		AllDay:         eventDb.AllDay,
+		AllDayTimezone: eventDb.AllDayTimezone,
+		Mention:        eventDb.Mention,
 	}
 
 	if !p.canViewEvent(user.Id, event, members) {
@@ -470,8 +476,15 @@ func (p *Plugin) GetEvent(w http.ResponseWriter, r *http.Request) {
 
 	userLoc := p.GetUserLocation(user)
 
-	event.Start = event.Start.In(userLoc)
-	event.End = event.End.In(userLoc)
+	if err := p.normalizeAllDay(&event); err != nil {
+		p.API.LogError(err.Error())
+		errorResponse(w, SomethingWentWrong)
+		return
+	}
+	if !event.AllDay {
+		event.Start = event.Start.In(userLoc)
+		event.End = event.End.In(userLoc)
+	}
 
 	apiResponse(w, &event)
 	return
@@ -610,32 +623,7 @@ func (p *Plugin) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	event.Updated = now
 	event.Owner = user.Id
 
-	loc := p.GetUserLocation(user)
-
-	startDateInLocalTimeZone := time.Date(
-		event.Start.Year(),
-		event.Start.Month(),
-		event.Start.Day(),
-		event.Start.Hour(),
-		event.Start.Minute(),
-		event.Start.Second(),
-		event.Start.Nanosecond(),
-		loc,
-	)
-
-	endDateInLocalTimeZone := time.Date(
-		event.End.Year(),
-		event.End.Month(),
-		event.End.Day(),
-		event.End.Hour(),
-		event.End.Minute(),
-		event.End.Second(),
-		event.End.Nanosecond(),
-		loc,
-	)
-
-	event.Start = startDateInLocalTimeZone.In(time.UTC)
-	event.End = endDateInLocalTimeZone.In(time.UTC)
+	setEventTimezone(&event, p.GetUserLocation(user))
 
 	if event.Recurrence != "" && len(event.Recurrence) > 0 {
 		event.Recurrent = true
@@ -673,6 +661,7 @@ func (p *Plugin) CreateEvent(w http.ResponseWriter, r *http.Request) {
 			"type",
 			"meeting_link",
 			"all_day",
+			"all_day_timezone",
 			"mention",
 		).
 		Values(
@@ -695,6 +684,7 @@ func (p *Plugin) CreateEvent(w http.ResponseWriter, r *http.Request) {
 			event.Type,
 			event.MeetingLink,
 			event.AllDay,
+			event.AllDayTimezone,
 			event.Mention,
 		).PlaceholderFormat(p.GetDBPlaceholderFormat())
 
@@ -892,32 +882,7 @@ func (p *Plugin) UpdateEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loc := p.GetUserLocation(user)
-
-	startDateInLocalTimeZone := time.Date(
-		event.Start.Year(),
-		event.Start.Month(),
-		event.Start.Day(),
-		event.Start.Hour(),
-		event.Start.Minute(),
-		event.Start.Second(),
-		event.Start.Nanosecond(),
-		loc,
-	)
-
-	endDateInLocalTimeZone := time.Date(
-		event.End.Year(),
-		event.End.Month(),
-		event.End.Day(),
-		event.End.Hour(),
-		event.End.Minute(),
-		event.End.Second(),
-		event.End.Nanosecond(),
-		loc,
-	)
-
-	event.Start = startDateInLocalTimeZone.In(time.UTC)
-	event.End = endDateInLocalTimeZone.In(time.UTC)
+	setEventTimezone(&event, p.GetUserLocation(user))
 
 	if event.Recurrence != "" && len(event.Recurrence) > 0 {
 		event.Recurrent = true
@@ -945,23 +910,24 @@ func (p *Plugin) UpdateEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updateFields := map[string]interface{}{
-		"title":        event.Title,
-		"description":  event.Description,
-		"dt_start":     event.Start,
-		"dt_end":       event.End,
-		"channel":      event.Channel,
-		"recurrence":   event.Recurrence,
-		"recurrent":    event.Recurrent,
-		"color":        event.Color,
-		"visibility":   event.Visibility,
-		"team":         event.Team,
-		"alert":        event.Alert,
-		"alert_time":   event.AlertTime,
-		"updated":      event.Updated,
-		"type":         event.Type,
-		"meeting_link": event.MeetingLink,
-		"all_day":      event.AllDay,
-		"mention":      event.Mention,
+		"title":            event.Title,
+		"description":      event.Description,
+		"dt_start":         event.Start,
+		"dt_end":           event.End,
+		"channel":          event.Channel,
+		"recurrence":       event.Recurrence,
+		"recurrent":        event.Recurrent,
+		"color":            event.Color,
+		"visibility":       event.Visibility,
+		"team":             event.Team,
+		"alert":            event.Alert,
+		"alert_time":       event.AlertTime,
+		"updated":          event.Updated,
+		"type":             event.Type,
+		"meeting_link":     event.MeetingLink,
+		"all_day":          event.AllDay,
+		"all_day_timezone": event.AllDayTimezone,
+		"mention":          event.Mention,
 	}
 	updateQueryBuilder := sq.Update("calendar_events").
 		SetMap(updateFields).

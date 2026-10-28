@@ -44,7 +44,7 @@ func (p *Plugin) ServeCalDAV(w http.ResponseWriter, r *http.Request) {
 	// Log all incoming requests for debugging
 	p.API.LogInfo("CalDAV incoming request",
 		"method", r.Method,
-		"path", r.URL.Path,
+		"path", redactCalendarTokens(r.URL.Path, token),
 		"host", r.Host,
 		"user-agent", r.Header.Get("User-Agent"),
 		"hasAuth", r.Header.Get("Authorization") != "")
@@ -120,7 +120,7 @@ func (p *Plugin) ServeCalDAV(w http.ResponseWriter, r *http.Request) {
 
 // ServeHTTP handles CalDAV HTTP requests
 func (b *CalDAVBackend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	b.plugin.API.LogInfo("CalDAV request", "method", r.Method, "path", r.URL.Path)
+	b.logInfo("CalDAV request", "method", r.Method, "path", r.URL.Path)
 
 	// Set DAV header for all responses (required by Apple Calendar)
 	w.Header().Set("DAV", "1, 2, 3, calendar-access")
@@ -155,14 +155,14 @@ func (b *CalDAVBackend) handleOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *CalDAVBackend) handleProppatch(w http.ResponseWriter, r *http.Request) {
-	b.plugin.API.LogInfo("CalDAV PROPPATCH", "path", r.URL.Path)
+	b.logInfo("CalDAV PROPPATCH", "path", r.URL.Path)
 
 	body, _ := io.ReadAll(r.Body)
 	bodyStr := string(body)
 
 	// Extract and save calendar-color if present
 	if color := extractCalendarColor(bodyStr); color != "" {
-		b.plugin.API.LogInfo("CalDAV PROPPATCH saving calendar color", "color", color)
+		b.logInfo("CalDAV PROPPATCH saving calendar color", "color", color)
 
 		updateBuilder := sq.Update("calendar_ical_tokens").
 			Set("calendar_color", color).
@@ -171,11 +171,11 @@ func (b *CalDAVBackend) handleProppatch(w http.ResponseWriter, r *http.Request) 
 
 		updateSql, updateArgs, sqlErr := updateBuilder.ToSql()
 		if sqlErr != nil {
-			b.plugin.API.LogError("CalDAV PROPPATCH: SQL build error: " + sqlErr.Error())
+			b.logError("CalDAV PROPPATCH: SQL build error: " + sqlErr.Error())
 		} else {
 			_, dbErr := b.plugin.DB.Exec(updateSql, updateArgs...)
 			if dbErr != nil {
-				b.plugin.API.LogError("CalDAV PROPPATCH: DB update error: " + dbErr.Error())
+				b.logError("CalDAV PROPPATCH: DB update error: " + dbErr.Error())
 			} else {
 				b.calendarColor = color
 			}
@@ -237,13 +237,13 @@ func (b *CalDAVBackend) handlePropfind(w http.ResponseWriter, r *http.Request) {
 
 	// Read request body to see what properties are requested
 	body, _ := io.ReadAll(r.Body)
-	b.plugin.API.LogInfo("CalDAV PROPFIND", "path", path, "depth", depth, "body", string(body))
+	b.logInfo("CalDAV PROPFIND", "path", path, "depth", depth, "body", string(body))
 
 	// Determine what we're querying
 	isRoot := strings.HasSuffix(path, b.token+"/") || strings.HasSuffix(path, b.token)
 	isCalendar := strings.Contains(path, "/calendar")
 
-	b.plugin.API.LogInfo("CalDAV PROPFIND routing", "isRoot", isRoot, "isCalendar", isCalendar, "depth", depth)
+	b.logInfo("CalDAV PROPFIND routing", "isRoot", isRoot, "isCalendar", isCalendar, "depth", depth)
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.WriteHeader(http.StatusMultiStatus)
@@ -263,7 +263,7 @@ func (b *CalDAVBackend) handlePropfind(w http.ResponseWriter, r *http.Request) {
 		response = b.rootPropfindResponse()
 	}
 
-	b.plugin.API.LogInfo("CalDAV PROPFIND response length", "length", len(response))
+	b.logInfo("CalDAV PROPFIND response length", "length", len(response))
 	w.Write([]byte(response))
 }
 
@@ -392,7 +392,7 @@ func (b *CalDAVBackend) calendarPropfindWithEvents() string {
 	for _, e := range events {
 		eventIDs = append(eventIDs, e.Id)
 	}
-	b.plugin.API.LogInfo("CalDAV PROPFIND events", "count", len(events), "ids", strings.Join(eventIDs, ","))
+	b.logInfo("CalDAV PROPFIND events", "count", len(events), "ids", strings.Join(eventIDs, ","))
 
 	var buf bytes.Buffer
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -444,7 +444,7 @@ func (b *CalDAVBackend) handleReport(w http.ResponseWriter, r *http.Request) {
 
 	// Read and parse the REPORT body to see what's being requested
 	body, _ := io.ReadAll(r.Body)
-	b.plugin.API.LogInfo("CalDAV REPORT body", "body", string(body))
+	b.logInfo("CalDAV REPORT body", "body", string(body))
 
 	// Check if this is a calendar-multiget (requesting specific events)
 	var requestedEventIDs []string
@@ -495,7 +495,7 @@ func (b *CalDAVBackend) handleReport(w http.ResponseWriter, r *http.Request) {
 
 			idx = hrefEnd + 1
 		}
-		b.plugin.API.LogInfo("CalDAV REPORT multiget", "requestedEventIDs", strings.Join(requestedEventIDs, ","))
+		b.logInfo("CalDAV REPORT multiget", "requestedEventIDs", strings.Join(requestedEventIDs, ","))
 	}
 
 	// Get events
@@ -521,7 +521,7 @@ func (b *CalDAVBackend) handleReport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		b.plugin.API.LogInfo("CalDAV REPORT filtered", "requested", len(requestedEventIDs), "found", len(filteredEvents))
+		b.logInfo("CalDAV REPORT filtered", "requested", len(requestedEventIDs), "found", len(filteredEvents))
 		events = filteredEvents
 	}
 
@@ -588,7 +588,7 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 
 	cal, err := ics.ParseCalendar(bytes.NewReader(body))
 	if err != nil {
-		b.plugin.API.LogError("CalDAV PUT: failed to parse iCal", "error", err.Error(), "body", string(body))
+		b.logError("CalDAV PUT: failed to parse iCal", "error", err.Error(), "body", string(body))
 		http.Error(w, "Failed to parse iCalendar data", http.StatusBadRequest)
 		return
 	}
@@ -611,9 +611,14 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 		eventID = uuid.New().String()
 	}
 
-	b.plugin.API.LogInfo("CalDAV PUT", "urlEventID", urlEventID, "icalUID", icalUID, "eventID", eventID)
+	b.logInfo("CalDAV PUT", "urlEventID", urlEventID, "icalUID", icalUID, "eventID", eventID)
 
-	event, err := b.icalendarToEvent(cal, eventID)
+	user, userErr := b.plugin.API.GetUser(b.userID)
+	if userErr != nil {
+		http.Error(w, "Failed to load user timezone", http.StatusInternalServerError)
+		return
+	}
+	event, err := b.icalendarToEvent(cal, eventID, user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -630,7 +635,7 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isUpdate := existingEvent != nil
-	b.plugin.API.LogInfo("CalDAV PUT decision", "isUpdate", isUpdate, "finalEventID", eventID)
+	b.logInfo("CalDAV PUT decision", "isUpdate", isUpdate, "finalEventID", eventID)
 
 	if isUpdate {
 		// Preserve owner and created time from existing event
@@ -644,17 +649,17 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 		}
 
 		err = b.updateEvent(event)
-		b.plugin.API.LogInfo("CalDAV PUT update", "eventID", eventID, "title", event.Title, "error", fmt.Sprintf("%v", err))
+		b.logInfo("CalDAV PUT update", "eventID", eventID, "title", event.Title, "error", fmt.Sprintf("%v", err))
 	} else {
 		event.Id = eventID
 		event.Owner = b.userID
 		event.Created = time.Now().UTC()
 		err = b.createEvent(event)
-		b.plugin.API.LogInfo("CalDAV PUT create", "eventID", eventID, "title", event.Title, "error", fmt.Sprintf("%v", err))
+		b.logInfo("CalDAV PUT create", "eventID", eventID, "title", event.Title, "error", fmt.Sprintf("%v", err))
 	}
 
 	if err != nil {
-		b.plugin.API.LogError("CalDAV PUT error: " + err.Error())
+		b.logError("CalDAV PUT error: " + err.Error())
 		http.Error(w, "Failed to save event", http.StatusInternalServerError)
 		return
 	}
@@ -664,7 +669,7 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 	if savedEvent != nil {
 		etag := eventETag(savedEvent)
 		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
-		b.plugin.API.LogInfo("CalDAV PUT response", "eventID", eventID, "etag", etag, "isUpdate", isUpdate)
+		b.logInfo("CalDAV PUT response", "eventID", eventID, "etag", etag, "isUpdate", isUpdate)
 	}
 
 	if isUpdate {
@@ -677,7 +682,7 @@ func (b *CalDAVBackend) handlePut(w http.ResponseWriter, r *http.Request) {
 
 func (b *CalDAVBackend) handleDelete(w http.ResponseWriter, r *http.Request) {
 	eventID := b.extractEventID(r.URL.Path)
-	b.plugin.API.LogInfo("CalDAV DELETE", "eventID", eventID, "path", r.URL.Path)
+	b.logInfo("CalDAV DELETE", "eventID", eventID, "path", r.URL.Path)
 
 	if eventID == "" {
 		http.Error(w, "Invalid event path", http.StatusBadRequest)
@@ -730,7 +735,7 @@ func (b *CalDAVBackend) getEventByID(eventID string) (*Event, error) {
 		"id", "title", "description", "dt_start", "dt_end",
 		"created", "owner", "channel", "recurrent", "recurrence",
 		"color", "team", "visibility", "alert", "alert_time",
-		"type", "meeting_link", "all_day",
+		"type", "meeting_link", "all_day", "all_day_timezone",
 	).
 		From("calendar_events").
 		Where(sq.Eq{"id": eventID}).
@@ -747,6 +752,9 @@ func (b *CalDAVBackend) getEventByID(eventID string) (*Event, error) {
 		return nil, fmt.Errorf("event not found: %w", err)
 	}
 
+	if err := b.plugin.normalizeAllDay(&event); err != nil {
+		return nil, err
+	}
 	return &event, nil
 }
 
@@ -759,15 +767,7 @@ func (b *CalDAVBackend) eventToICalendarString(event *Event, user *model.User) s
 	icsEvent := cal.AddEvent(event.Id)
 	icsEvent.SetDtStampTime(event.Created)
 	icsEvent.SetCreatedTime(event.Created)
-	if event.AllDay {
-		// Start/End are already stored as an exclusive day range, matching
-		// what VALUE=DATE expects
-		icsEvent.SetAllDayStartAt(event.Start)
-		icsEvent.SetAllDayEndAt(event.End)
-	} else {
-		icsEvent.SetStartAt(event.Start)
-		icsEvent.SetEndAt(event.End)
-	}
+	b.plugin.setICalendarDates(icsEvent, *event, user)
 	icsEvent.SetSummary(event.Title)
 
 	if event.Description != "" {
@@ -798,7 +798,7 @@ func (b *CalDAVBackend) eventToICalendarString(event *Event, user *model.User) s
 	return cal.Serialize()
 }
 
-func (b *CalDAVBackend) icalendarToEvent(cal *ics.Calendar, eventID string) (*Event, error) {
+func (b *CalDAVBackend) icalendarToEvent(cal *ics.Calendar, eventID string, user *model.User) (*Event, error) {
 	events := cal.Events()
 	if len(events) == 0 {
 		return nil, fmt.Errorf("no VEVENT found in calendar")
@@ -839,6 +839,18 @@ func (b *CalDAVBackend) icalendarToEvent(cal *ics.Calendar, eventID string) (*Ev
 		end := b.parseICalTime(dtend)
 		if !end.IsZero() {
 			event.End = end
+		}
+	}
+
+	if event.AllDay && user != nil {
+		// VALUE=DATE carries calendar dates, not UTC instants. Store them as
+		// local midnights converted to UTC, matching events saved by the web API.
+		loc := b.plugin.GetUserLocation(user)
+		event.AllDayTimezone = loc.String()
+		for _, date := range []*time.Time{&event.Start, &event.End} {
+			if !date.IsZero() {
+				*date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc).UTC()
+			}
 		}
 	}
 
@@ -894,7 +906,7 @@ func (b *CalDAVBackend) parseICalTime(prop *ics.IANAProperty) time.Time {
 			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc)
 			return t.UTC()
 		}
-		b.plugin.API.LogWarn("Unknown timezone", "tzid", tzid, "error", err.Error())
+		b.logWarn("Unknown timezone", "tzid", tzid, "error", err.Error())
 	}
 
 	// No timezone info - assume it's already in user's local time, treat as UTC
@@ -918,12 +930,12 @@ func (b *CalDAVBackend) createEvent(event *Event) error {
 		Columns(
 			"id", "title", "description", "dt_start", "dt_end",
 			"created", "updated", "owner", "channel", "recurrent", "recurrence",
-			"color", "visibility", "team", "alert", "alert_time", "all_day",
+			"color", "visibility", "team", "alert", "alert_time", "all_day", "all_day_timezone",
 		).
 		Values(
 			event.Id, event.Title, event.Description, event.Start, event.End,
 			event.Created, event.Updated, event.Owner, event.Channel, event.Recurrent, event.Recurrence,
-			event.Color, event.Visibility, event.Team, event.Alert, event.AlertTime, event.AllDay,
+			event.Color, event.Visibility, event.Team, event.Alert, event.AlertTime, event.AllDay, event.AllDayTimezone,
 		).
 		PlaceholderFormat(b.plugin.GetDBPlaceholderFormat())
 
@@ -944,14 +956,15 @@ func (b *CalDAVBackend) updateEvent(event *Event) error {
 	event.Updated = time.Now().UTC()
 
 	updateFields := map[string]interface{}{
-		"title":       event.Title,
-		"description": event.Description,
-		"dt_start":    event.Start,
-		"dt_end":      event.End,
-		"recurrence":  event.Recurrence,
-		"recurrent":   event.Recurrent,
-		"all_day":     event.AllDay,
-		"updated":     event.Updated,
+		"title":            event.Title,
+		"description":      event.Description,
+		"dt_start":         event.Start,
+		"dt_end":           event.End,
+		"recurrence":       event.Recurrence,
+		"recurrent":        event.Recurrent,
+		"all_day":          event.AllDay,
+		"all_day_timezone": event.AllDayTimezone,
+		"updated":          event.Updated,
 	}
 
 	updateQueryBuilder := sq.Update("calendar_events").
@@ -980,6 +993,10 @@ func xmlEscape(s string) string {
 
 // eventETag generates a deterministic ETag based on event's Updated timestamp
 func eventETag(event *Event) string {
+	if event.AllDay {
+		// Invalidate cached all-day representations exported with UTC dates.
+		return fmt.Sprintf("date-v3-%x", event.Updated.UnixNano())
+	}
 	// Use Updated timestamp for ETag - changes every time event is modified
 	return fmt.Sprintf("%x", event.Updated.UnixNano())
 }

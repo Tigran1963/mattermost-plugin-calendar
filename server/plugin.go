@@ -146,7 +146,7 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 	// Log all incoming requests to the plugin for debugging
 	p.API.LogDebug("Plugin HTTP request",
 		"method", r.Method,
-		"path", r.URL.Path,
+		"path", redactCalendarTokens(r.URL.Path),
 		"user-agent", r.Header.Get("User-Agent"))
 
 	ctx := context.WithValue(r.Context(), "pluginRequest", c)
