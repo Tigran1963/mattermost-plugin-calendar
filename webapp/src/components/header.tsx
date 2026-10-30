@@ -18,6 +18,7 @@ import {
 } from '@fluentui/react-icons';
 
 import {
+    eventSelected,
     openEventModal,
     setSettingsPanelOpen,
     updateCalendarSettingsOnServer,
@@ -190,7 +191,7 @@ const HeaderComponent = () => {
                     appearance='primary'
                     size='medium'
                     className='create-event-button'
-                    onClick={() => dispatch(openEventModal())}
+                    onClick={() => {dispatch(eventSelected({})); dispatch(openEventModal());}}
                     icon={<CalendarEmpty16Filled/>}
                 >
                     <div className='create-event-button-text'>{'Create'}</div>

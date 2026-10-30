@@ -10,6 +10,8 @@
     "test": "jest --forceExit --detectOpenHandles --verbose",
     "test:watch": "jest --watch",
     "test:pickers": "node --test tests/channel-picker.test.cjs",
+    "test:sidebar": "node --test tests/calendar-sidebar.test.cjs",
+    "test:creation": "node --test tests/event-creation.test.cjs",
     "test-ci": "jest --forceExit --detectOpenHandles --maxWorkers=2",
     "check-types": "tsc"
   },

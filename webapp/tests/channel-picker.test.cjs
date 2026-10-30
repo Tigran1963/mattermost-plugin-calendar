@@ -36,8 +36,9 @@ function setup(client = {}) {
         getProfilesInChannel: () => ({}), errors: [], showErrorToast: message => ctx.errors.push(message),
         dispatch: action => {if (action?.type === 'members') {ctx.usersAddedInEvent = action.members; ctx.usersAddedInEventRef.current = action.members;}},
         updateMembersAddedInEvent: members => ({type: 'members', members}), updateSelectedEventTime: () => ({}),
-        selectedCalendarType: 'call', defaultTypeForCalendar: () => 'call', applyTypeDefaults: () => {},
-        alertTouchedRef: {}, allDayTouchedRef: {}, initialDate: new Date(), initialStartTime: () => '', initialEndTime: () => '', DEFAULT_MENTION: '', DEFAULT_VISIBILITY: 'team',
+        selectedCalendarType: 'call', defaultTypeForCalendar: () => 'call', isCallType: () => true, applyTypeDefaults: () => {},
+        currentUser: {}, agendaTimeZone: () => 'UTC', newEventTime: () => ({}),
+        alertTouchedRef: {}, allDayTouchedRef: {}, DEFAULT_MENTION: '', DEFAULT_VISIBILITY: 'team',
     };
     for (const [setter, key] of Object.entries({setChannelsAutocomplete: 'channelsAutocomplete', setSelectedChannel: 'selectedChannel', setSelectedChannelText: 'selectedChannelText', setIsLoadingChannelMembers: 'isLoadingChannelMembers', setUsersAutocomplete: 'usersAutocomplete'})) ctx[setter] = value => {ctx[key] = value;};
     for (const name of ['setTitleEvent', 'setDescriptionEvent', 'setIsSaving', 'setIsLoading', 'setSearchUsersInput', 'setShowCustomRepeat', 'setRepeatOptionsSelected', 'setRepeatOption', 'setRepeatRule', 'setMeetingLink', 'setEventOwner', 'setSelectedMention', 'setSelectedVisibility', 'setSelectedType']) ctx[name] = () => {};

@@ -1,5 +1,6 @@
-import {Action, Store} from 'redux';
+import {Store} from 'redux';
 import {GlobalState} from 'mattermost-redux/types/store';
+import {DispatchFunc} from 'mattermost-redux/types/actions';
 
 import {render} from 'react-dom';
 
@@ -23,12 +24,14 @@ import {PluginRegistry} from './types/mattermost-webapp';
 import {eventNotification, updateCalendarSettings} from './actions';
 import {ApiClient} from './client';
 import NotificationWidget from './components/notification-widget';
+import {registerCalendarSidebar} from './register-calendar-sidebar';
 
 const EmptyComponent = () => <></>;
+type PluginStore = Omit<Store<GlobalState>, 'dispatch'> & {dispatch: DispatchFunc};
 
 export default class Plugin {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
-    public async initialize(registry: PluginRegistry, store: Store<GlobalState, Action<Record<string, unknown>>>) {
+    public async initialize(registry: PluginRegistry, store: PluginStore) {
         registry.registerReducer(reducer);
         registry.registerProduct(
             '/calendar',
@@ -40,6 +43,7 @@ export default class Plugin {
             EmptyComponent,
             true,
         );
+        registerCalendarSidebar(registry, store.dispatch);
 
         // Load calendar settings like playbooks
         const getCalendarSettings = async () => {

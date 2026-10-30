@@ -43,6 +43,8 @@ export declare type GetEventsResponse = {
     created: string;
     owner: string;
     color?: string;
+    type?: string;
+    allDay?: boolean;
 }
 export declare type RemoveEventResponse = {
     success: boolean
@@ -82,7 +84,7 @@ async function ensureOk(response: Response): Promise<void> {
 export declare class ApiClientInterface {
     static getEventById(event: string): Promise<GetEventResponse>
 
-    static getEvents(): Promise<GetEventsResponse>
+    static getEvents(start: string, end: string, signal?: AbortSignal): Promise<ApiResponse<GetEventsResponse[]>>
 
     static createEvent(title: string, start: string, end: string, attendees: string[]): Promise<GetEventResponse>
 }
@@ -114,8 +116,18 @@ export class ApiClient implements ApiClientInterface {
         return data;
     }
 
-    static async getEvents(): Promise<GetEventsResponse> {
-        throw new Error('Method not implemented.');
+    static async getEvents(start: string, end: string, signal?: AbortSignal): Promise<ApiResponse<GetEventsResponse[]>> {
+        const query = new URLSearchParams({start, end});
+        const response = await fetch(
+            getSiteURL() + `/plugins/${PluginId}/events?${query.toString()}`,
+            {...Client4.getOptions({method: 'GET'}), signal},
+        );
+        await ensureOk(response);
+        const body = await response.json();
+        if (body.data !== null && !Array.isArray(body.data)) {
+            throw new Error('Unexpected calendar response');
+        }
+        return {data: body.data || []};
     }
 
     static async removeEvent(event: string): Promise<ApiResponse<RemoveEventResponse>> {

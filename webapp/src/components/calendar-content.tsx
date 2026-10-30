@@ -132,10 +132,7 @@ const CalendarContent = () => {
 
     const onDateTimeSelected = (dateTimeSelectInfo: DateSelectArg) => {
         dispatch(eventSelected({
-            event: {
-                start: dateTimeSelectInfo.start.setMinutes(dateTimeSelectInfo.start.getMinutes() + dateTimeSelectInfo.start.getTimezoneOffset()),
-                end: dateTimeSelectInfo.end.setMinutes(dateTimeSelectInfo.end.getMinutes() + dateTimeSelectInfo.end.getTimezoneOffset()),
-            },
+            newEventDate: dateTimeSelectInfo.startStr.slice(0, 10),
         }));
         dispatch(openEventModal());
     };

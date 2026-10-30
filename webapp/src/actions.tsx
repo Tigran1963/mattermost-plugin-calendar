@@ -1,7 +1,5 @@
 import {DispatchFunc} from 'mattermost-redux/types/actions';
 
-import {EventClickArg} from '@fullcalendar/common';
-
 import {
     STORAGE_KEY_CALENDAR_TYPE,
     STORAGE_KEY_CALENDAR_VIEW,
@@ -13,7 +11,7 @@ import {CalendarEventNotification, SelectedEventTime} from './types/event';
 import {UserProfile} from "mattermost-redux/types/users";
 import {set} from "date-fns";
 
-export const eventSelected = (event: EventClickArg) => {
+export const eventSelected = (event: {newEventDate?: string; event?: {id?: string; start?: Date | number | null; end?: Date | number | null}}) => {
     return {
         type: 'eventSelected',
         payload: event,

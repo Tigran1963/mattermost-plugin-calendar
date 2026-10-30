@@ -8,7 +8,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { getCurrentTeamId, getCurrentTeam, getMyTeams } from 'mattermost-redux/selectors/entities/teams';
 import { getMyTeams as fetchMyTeams } from 'mattermost-redux/actions/teams';
-import { getCurrentUserId, getUser, getUserStatuses } from 'mattermost-redux/selectors/entities/users';
+import { getCurrentUser, getCurrentUserId, getUser, getUserStatuses } from 'mattermost-redux/selectors/entities/users';
 import { getTeammateNameDisplaySetting } from 'mattermost-redux/selectors/entities/preferences';
 import { getMissingProfilesByIds } from 'mattermost-redux/actions/users';
 
@@ -54,8 +54,6 @@ import { format, parse, set, startOfDay, addDays, subDays } from 'date-fns';
 import { InputOnChangeData } from '@fluentui/react-input';
 import { Toggle } from '@fluentui/react/lib/Toggle';
 
-import roundToNearestMinutes from 'date-fns/roundToNearestMinutes';
-
 import { GlobalState } from 'mattermost-redux/types/store';
 
 import { closeEventModal, eventSelected, updateMembersAddedInEvent, updateSelectedEventTime } from 'actions';
@@ -75,6 +73,8 @@ import EventAlertSelect from "./alert-input";
 // import VisibilitySelect from './visibility-input';
 import EventTypeSelect from './event-type-input';
 import MentionSelect from './mention-input';
+import {agendaTimeZone} from './calendar-agenda';
+import {newEventTime} from './new-event-time';
 
 interface AddedUserComponentProps {
     user: UserProfile
@@ -120,22 +120,6 @@ const defaultTypeForCalendar = (calendarType: string): string => {
 // that pings when it starts
 const isCallType = (type: string): boolean => type === EVENT_TYPE_CALL;
 
-const initialStartTime = (): string => {
-    return format(roundToNearestMinutes(new Date(), {
-        nearestTo: 30,
-        roundingMethod: 'ceil',
-    }), 'HH:mm');
-};
-
-const initialEndTime = (): string => {
-    const dt = new Date();
-    dt.setMinutes(dt.getMinutes() + 30);
-    return format(roundToNearestMinutes(dt, {
-        nearestTo: 30,
-        roundingMethod: 'ceil',
-    }), 'HH:mm');
-};
-
 const parseEventDate = (value: string, allDay: boolean): Date => {
     return parse(value, allDay ? 'yyyy-MM-dd' : "yyyy-MM-dd'T'HH:mm:ssxxx", new Date());
 };
@@ -153,6 +137,7 @@ const EventModalComponent = () => {
 
     const UserStatusSelector = useSelector(getUserStatuses);
     const currentUserId = useSelector(getCurrentUserId);
+    const currentUser = useSelector(getCurrentUser);
     const selectedEventTime = useSelector(getSelectedEventTime);
     const settings = useSelector(getCalendarSettings);
     const selectedCalendarType = useSelector(getSelectedCalendarType);
@@ -176,8 +161,6 @@ const EventModalComponent = () => {
 
     const resolvedTeam: Team | undefined = currentTeam || myTeams[0];
     const teamId: string = currentTeamId || resolvedTeam?.id || '';
-
-    const initialDate = new Date();
 
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -285,19 +268,15 @@ const EventModalComponent = () => {
         dispatch(eventSelected({}));
     };
 
-    const cleanState = () => {
+    const cleanState = (selectedDate?: string) => {
         setTitleEvent('');
         setDescriptionEvent('');
 
         setIsSaving(false);
         setIsLoading(false);
 
-        dispatch(updateSelectedEventTime({
-            start: initialDate,
-            end: initialDate,
-            startTime: initialStartTime(),
-            endTime: initialEndTime(),
-        }));
+        const defaultType = defaultTypeForCalendar(selectedCalendarType);
+        dispatch(updateSelectedEventTime(newEventTime(new Date(), agendaTimeZone(currentUser?.timezone), selectedDate, !isCallType(defaultType))));
 
         userSearchRequest.current += 1;
         channelSearchRequest.current += 1;
@@ -329,7 +308,6 @@ const EventModalComponent = () => {
 
         // a new event belongs to the calendar the user is currently looking at,
         // otherwise it would be saved out of view
-        const defaultType = defaultTypeForCalendar(selectedCalendarType);
         setSelectedType(defaultType);
         applyTypeDefaults(defaultType);
     };
@@ -627,6 +605,9 @@ const EventModalComponent = () => {
         } else if (!alertTouchedRef.current) {
             setSelectedAlert(isCallType(selectedType) ? EVENT_ALERT_AT_START_TIME : '');
         }
+        if (!checked && buildDateTime(selectedEventTime.end, selectedEventTime.endTime) <= buildDateTime(selectedEventTime.start, selectedEventTime.startTime)) {
+            dispatch(updateSelectedEventTime({end: addDays(startOfDay(selectedEventTime.start), 1)}));
+        }
     };
 
     // Fluent's dialog only locks scrolling when the body itself is the
@@ -642,14 +623,7 @@ const EventModalComponent = () => {
 
     useEffect(() => {
         if (isOpenEventModal && selectedEvent?.event?.id == null) {
-            // a range dragged out on the grid is an explicit choice of times,
-            // so the type default must not flatten it into an all-day event
-            if (selectedEvent?.event?.start != null) {
-                allDayTouchedRef.current = true;
-            }
-            const defaultType = defaultTypeForCalendar(selectedCalendarType);
-            setSelectedType(defaultType);
-            applyTypeDefaults(defaultType);
+            cleanState(selectedEvent?.newEventDate);
         }
     }, [isOpenEventModal]);
 
@@ -715,13 +689,6 @@ const EventModalComponent = () => {
                     showErrorToast('Failed to load event, please try again');
                 }
             });
-        } else if (selectedEvent?.event?.id == null && selectedEvent?.event?.start != null) {
-            dispatch(updateSelectedEventTime({
-                start: selectedEvent?.event.start,
-                end: selectedEvent?.event.end,
-                startTime: format(selectedEvent?.event.start, 'HH:mm'),
-                endTime: format(selectedEvent?.event.end, 'HH:mm'),
-            }));
         }
 
         return () => {

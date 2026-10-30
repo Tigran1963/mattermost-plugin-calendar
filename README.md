@@ -19,6 +19,18 @@ The Mattermost Calendar Plugin is a powerful tool to help you schedule and manag
 - **iCal/CalDAV Support:** Sync your calendar with external applications like Apple Calendar, Thunderbird, or Google Calendar.
 
 
+## Calendar sidebar
+
+Select the calendar icon in the App Bar on the right of Channels to see the next
+seven days, including both calls and events with colors from your calendar settings.
+The event list scrolls independently of the action buttons, with sticky day headings
+to keep the current day visible. Select an event to open its editor, or **Create**
+to create one without leaving the channel. **Open calendar** opens the full calendar
+page, where you can filter by event type.
+
+On mobile, or when the App Bar is disabled, the same action is available in the
+channel header's plugin menu.
+
 ## CalDAV Setup
 
 CalDAV allows you to sync your Mattermost calendar with external calendar applications (Apple Calendar, Thunderbird, etc.) for two-way synchronization.
